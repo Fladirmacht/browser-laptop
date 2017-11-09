@@ -128,8 +128,10 @@ class Tabs extends React.Component {
     props.draggingTabId = tabState.draggingTabId(state)
 
     // used in other functions
+    props.firstTabDisplayIndex = startingFrameIndex
     props.fixTabWidth = currentWindow.getIn(['ui', 'tabs', 'fixTabWidth'])
     props.tabPageIndex = currentWindow.getIn(['ui', 'tabs', 'tabPageIndex'])
+    props.totalTabCount = unpinnedTabs.size
     props.dragData = dragData
     props.dragWindowId = dragData.get('windowId')
     props.totalPages = totalPages
@@ -138,17 +140,29 @@ class Tabs extends React.Component {
 
   render () {
     const isPreview = this.props.previewTabPageIndex != null
+    const displayedTabIndex = this.props.previewTabPageIndex != null ? this.props.previewTabPageIndex : this.props.tabPageIndex
     return <div className={css(styles.tabs)}
       data-test-id='tabs'
       onMouseLeave={this.onMouseLeave}
     >
+      {
+        this.props.onPreviousPage
+          ? <BrowserButton
+            key='prev'
+            iconClass={globalStyles.appIcons.prev}
+            size='21px'
+            custom={[styles.tabs__tabStrip__navigation, styles.tabs__tabStrip__navigation_prev]}
+            onClick={this.onPrevPage}
+            />
+          : null
+        }
       {[
         <ListWithTransitions className={css(
             styles.tabs__tabStrip,
             isPreview && styles.tabs__tabStrip_isPreview,
             this.props.shouldAllowWindowDrag && styles.tabs__tabStrip_allowDragging
           )}
-          key={!isPreview ? 'normal' : this.props.previewTabPageIndex}
+          key={displayedTabIndex}
           disableAllAnimations={isPreview}
           data-test-preview-tab={isPreview}
           typeName='span'
@@ -174,17 +188,7 @@ class Tabs extends React.Component {
           ]}
           onDragOver={this.onDragOver}
           onDrop={this.onDrop}>
-          {
-            this.props.onPreviousPage
-              ? <BrowserButton
-                key='prev'
-                iconClass={globalStyles.appIcons.prev}
-                size='21px'
-                custom={[styles.tabs__tabStrip__navigation, styles.tabs__tabStrip__navigation_prev]}
-                onClick={this.onPrevPage}
-                />
-              : null
-          }
+
           {
             this.props.currentTabs
               .map((frame, tabDisplayIndex) =>
@@ -192,10 +196,13 @@ class Tabs extends React.Component {
                   key={`tab-${frame.get('tabId')}-${frame.get('key')}`}
                   frame={frame}
                   isDragging={this.props.draggingTabId === frame.get('tabId')}
-                  displayIndex={tabDisplayIndex}
-                  displayedTabCount={this.props.currentTabs.count()}
-                  singleTab={this.props.currentTabs.count() === 1}
+                  firstTabDisplayIndex={this.props.firstTabDisplayIndex}
+                  displayIndex={tabDisplayIndex + this.props.firstTabDisplayIndex}
+                  displayedTabCount={this.props.currentTabs.size}
+                  totalTabCount={this.props.totalTabCount}
+                  singleTab={this.props.totalTabCount === 1}
                   partOfFullPageSet={this.props.partOfFullPageSet}
+                  tabPageIndex={displayedTabIndex}
                 />
               )
           }
@@ -248,7 +255,8 @@ const styles = StyleSheet.create({
     display: 'flex',
     flex: 1,
     zIndex: globalStyles.zindex.zindexTabs,
-    overflow: 'hidden'
+    overflow: 'hidden',
+    position: 'relative'
   },
 
   tabs__tabStrip_isPreview: globalStyles.animations.tabFadeIn,

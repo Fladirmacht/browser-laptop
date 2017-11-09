@@ -14,13 +14,41 @@ const dragDetachedWindowIdSelector = createSelector(
   dragState => dragState && dragState.get('dragDetachedWindowId')
 )
 
+const windowUIStateSelector = windowState => windowState.get('ui')
+const windowTabUIStateSelector = createSelector(
+  windowUIStateSelector,
+  uiState => uiState.get('tabs')
+)
+const windowDragSourceTabIdSelector = createSelector(
+  windowTabUIStateSelector,
+  tabUIState => tabUIState.get('tabDragSourceTabId')
+)
+
 const tabDraggingState = {
   isCurrentWindowDetached: createSelector(
     // re-run next function only if dragDetachedWindowId changes
     dragDetachedWindowIdSelector,
     detachedWindowId =>
       detachedWindowId && detachedWindowId === getCurrentWindowId()
-  )
+  ),
+
+  isDragging: createSelector(
+    dragDataSelector,
+    dragState => {
+      return dragState != null
+    }
+  ),
+
+  windowStateIsDragging: createSelector(
+    windowDragSourceTabIdSelector,
+    dragSourceTabId => dragSourceTabId != null
+  ),
+
+  setWindowStateDragSourceTabId: (windowState, sourceTabId) =>
+    windowState.setIn(['ui', 'tabs', 'tabDragSourceTabId'], sourceTabId),
+
+  clearWindowStateDragSourceTabId: windowState =>
+    windowState.deleteIn(['ui', 'tabs', 'tabDragSourceTabId'])
 }
 
 module.exports = tabDraggingState

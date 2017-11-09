@@ -46,6 +46,8 @@ const throttle = require('lodash.throttle')
 const DRAG_DETACH_PX_THRESHOLD_INITIAL = 44
 const DRAG_DETACH_PX_THRESHOLD_POSTSORT = 80
 const DRAG_DETACH_MS_TIME_BUFFER = 0
+// time to wait before moving page
+const DRAG_PAGEMOVE_MS_TIME_BUFFER = 750
 
 // HACK - see the related `createEventFromSendMouseMoveInput` in tabDraggingWindowReducer.js
 function translateEventFromSendMouseMoveInput (receivedEvent) {
@@ -124,7 +126,7 @@ class Tab extends React.Component {
 
   attachDragSortHandlers () {
     // get tab width
-    this.draggingTabWidth = this.elementRef.getBoundingClientRect().width
+    window.requestAnimationFrame(() => this.evaluateDraggingTabWidth())
     // initial distance that has to be travelled outside the tab bar in order to detach the tab
     // (increases after some sorting has happened, as the user may be more 'relaxed' with the mouse)
     this.draggingDetachThreshold = DRAG_DETACH_PX_THRESHOLD_INITIAL
@@ -134,6 +136,13 @@ class Tab extends React.Component {
     // more often
     this.parentClientRect = this.elementRef.parentElement.getBoundingClientRect()
     window.addEventListener('mousemove', this.onTabDraggingMouseMove)
+    // fire sort handler manually with the first update, if we have one
+    // since we may have attached but not received mouse event yet
+    if (this.props.dragWindowClientX && this.props.dragWindowClientY) {
+      window.requestAnimationFrame(() => {
+        this.onTabDraggingMouseMove({ clientX: this.props.dragWindowClientX, clientY: this.props.dragWindowClientY })
+      })
+    }
   }
 
   removeDragSortHandlers () {
@@ -168,7 +177,7 @@ class Tab extends React.Component {
   }
 
   onTabDraggingMouseMoveDetectSortChange (e) {
-    if (!this.parentClientRect) {
+    if (!this.parentClientRect || !this.draggingTabWidth) {
       return
     }
     // find when the order should be changed
@@ -201,21 +210,59 @@ class Tab extends React.Component {
       const tabWidth = this.draggingTabWidth
       const tabLeft = e.clientX - this.parentClientRect.left - this.props.relativeXDragStart
       const currentIndex = this.props.displayIndex
-      const destinationIndex = Math.max(
+      let destinationIndex = Math.max(
         0,
-        Math.min(this.props.displayedTabCount - 1, Math.floor((tabLeft + (tabWidth / 2)) / tabWidth))
+        Math.min(this.props.totalTabCount - 1, this.props.firstTabDisplayIndex + Math.floor((tabLeft + (tabWidth / 2)) / tabWidth))
       )
       if (currentIndex !== destinationIndex) {
-        windowActions.tabDragChangeGroupDisplayIndex(this.props.isPinnedTab, destinationIndex)
-        // now that we have sorted, increase the threshold
-        // required for detach
+        // only allow to drag to a different page if we hang here for a while
+        const lastIndexOnCurrentPage = (this.props.firstTabDisplayIndex + this.props.displayedTabCount) - 1
+        const firstIndexOnCurrentPage = this.props.firstTabDisplayIndex
+        const isDraggingToPreviousPage = destinationIndex < firstIndexOnCurrentPage
+        const isDraggingToNextPage = destinationIndex > lastIndexOnCurrentPage
+        const isDraggingToDifferentPage = isDraggingToPreviousPage || isDraggingToNextPage
+        if (isDraggingToDifferentPage) {
+          // dragging to a different page
+          // make sure the user wants to change page by enforcing a pause
+          // but at least make sure the tab has moved to the index just next to the threshold
+          // (since we might have done a big jump)
+          if (isDraggingToNextPage && currentIndex !== lastIndexOnCurrentPage) {
+            windowActions.tabDragChangeGroupDisplayIndex(this.props.isPinnedTab, lastIndexOnCurrentPage)
+          } else if (isDraggingToPreviousPage && currentIndex !== firstIndexOnCurrentPage) {
+            windowActions.tabDragChangeGroupDisplayIndex(this.props.isPinnedTab, firstIndexOnCurrentPage)
+          }
+          this.beginOrContinueTimeoutForDragPageIndexMove(destinationIndex)
+        } else {
+          // dragging to a different index within the same page,
+          // so clear the wait for changing page and move immediately
+          this.clearDragPageIndexMoveTimeout()
+          // move display index immediately
+          windowActions.tabDragChangeGroupDisplayIndex(this.props.isPinnedTab, destinationIndex)
+        }
+        // a display index has changed, so increase the threshold
+        // required for detach (different axis of movement)
         this.draggingDetachThreshold = DRAG_DETACH_PX_THRESHOLD_POSTSORT
+      } else {
+        // no longer want to change tab page
+        this.clearDragPageIndexMoveTimeout()
       }
     }
   }
 
+  clearDragPageIndexMoveTimeout () {
+    window.clearTimeout(this.draggingMoveTabPageTimeout)
+    this.draggingMoveTabPageTimeout = null
+  }
+
+  beginOrContinueTimeoutForDragPageIndexMove (destinationIndex) {
+    this.draggingMoveTabPageTimeout = this.draggingMoveTabPageTimeout || window.setTimeout(() => {
+      this.draggingMoveTabPageTimeout = null
+      windowActions.tabDragChangeGroupDisplayIndex(this.props.isPinnedTab, destinationIndex, true)
+    }, DRAG_PAGEMOVE_MS_TIME_BUFFER)
+  }
+
   dragTab (e) {
-    if (!this.elementRef) {
+    if (!this.elementRef || !this.parentClientRect) {
       return
     }
     // cache just in case we need to force the tab to move to the mouse cursor
@@ -264,6 +311,15 @@ class Tab extends React.Component {
     // we do not need to send the cursor pos as it will be read by the store, since
     // it may move between here and there
     appActions.tabDragSingleTabMoved(x, y, this.currentWindowId)
+  }
+
+  /*
+   * Should be called whenever tab size changes. Since Chrome does not yet support ResizeObserver,
+   * we have to figure out the times. Luckily it's probably just initial drag start and when
+   * then tab page changes
+   */
+  evaluateDraggingTabWidth () {
+    this.draggingTabWidth = this.elementRef.getBoundingClientRect().width
   }
 
   //
@@ -359,13 +415,12 @@ class Tab extends React.Component {
     this.tabNode.addEventListener('auxclick', this.onAuxClick.bind(this))
 
     // if a new tab is already dragging,
-    // that means that it has been attached from another window.
-    // That window is handling the mousemove -> store dispatch
-    // which is sending our window mousemove events.
+    // that means that it has been attached from another window,
+    // or moved from another page.
     // All we have to do is move the tab DOM element,
     // and let the store know when the tab should move to another
     // tab's position
-    if (this.props.isDragging && !this.props.dragOriginatedThisWindow) {
+    if (this.props.isDragging) {
         // setup tab moving
       this.attachDragSortHandlers()
     }
@@ -405,11 +460,13 @@ class Tab extends React.Component {
     props.themeColor = tabUIState.getThemeColor(currentWindow, frameKey)
     props.displayIndex = ownProps.displayIndex
     props.displayedTabCount = ownProps.displayedTabCount
+    props.totalTabCount = ownProps.totalTabCount || ownProps.displayedTabCount
     props.title = frame.get('title')
     props.partOfFullPageSet = partOfFullPageSet
     props.showAudioTopBorder = audioState.showAudioTopBorder(currentWindow, frameKey, isPinned)
     props.centralizeTabIcons = tabUIState.centralizeTabIcons(currentWindow, frameKey, isPinned)
-
+    props.firstTabDisplayIndex = ownProps.firstTabDisplayIndex != null ? ownProps.firstTabDisplayIndex : 0
+    props.tabPageIndex = ownProps.tabPageIndex
     // used in other functions
     props.tabId = tabId
     props.previewMode = currentWindow.getIn(['ui', 'tabs', 'previewMode'])
@@ -484,14 +541,13 @@ class Tab extends React.Component {
       // is firing the event to the store which will check
       // for detach / attach to windows
       this.attachDragSortHandlers()
-      // fire sort handler manually with the first update, if we have one
-      // since we may have attached but not received mouse event yet
-      if (this.props.dragWindowClientX && this.props.dragWindowClientY) {
-        this.onTabDraggingMouseMove({ clientX: this.props.dragWindowClientX, clientY: this.props.dragWindowClientY })
-      }
     } else if (prevProps.isDragging && !this.props.isDragging) {
       // tear-down tab moving
       this.removeDragSortHandlers()
+    } else if (this.props.isDragging && this.props.tabPageIndex !== prevProps.tabPageIndex) {
+      // reevaluate anything that's changed when tab is dragged to a new page
+      this.draggingTabWidth = null
+      window.requestAnimationFrame(() => this.evaluateDraggingTabWidth())
     }
 
     // detect sort order change during drag

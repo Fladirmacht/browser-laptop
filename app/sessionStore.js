@@ -148,6 +148,7 @@ module.exports.cleanPerWindowData = (immutablePerWindowData, isShutdown) => {
     ['ui', 'mouseInTitlebar'],
     ['ui', 'mouseInFrame'],
     ['ui', 'dragging'],
+    ['ui', 'tabs', 'dragSourceTabId'],
     ['ui', 'isClearBrowsingDataPanelVisible']
   ])
 

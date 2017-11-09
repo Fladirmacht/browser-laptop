@@ -69,7 +69,7 @@ class PinnedTabs extends React.Component {
               key={`tab-${frame.get('tabId')}-${frame.get('key')}`}
               isDragging={this.props.draggingTabId === frame.get('tabId')}
               displayIndex={tabDisplayIndex}
-              displayedTabCount={this.props.pinnedTabs.count()}
+              displayedTabCount={this.props.pinnedTabs.size}
             />
           )
       }

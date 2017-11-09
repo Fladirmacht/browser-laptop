@@ -1219,11 +1219,12 @@ const appActions = {
     })
   },
 
-  tabDragChangeWindowDisplayIndex: function (destinationDisplayIndex, destinationFrameIndex) {
+  tabDragChangeWindowDisplayIndex: function (destinationDisplayIndex, destinationFrameIndex, requiresMouseUpdate = false) {
     dispatch({
       actionType: appConstants.APP_TAB_DRAG_CHANGE_WINDOW_DISPLAY_INDEX,
       destinationDisplayIndex,
-      destinationFrameIndex
+      destinationFrameIndex,
+      requiresMouseUpdate
     })
   },
 
